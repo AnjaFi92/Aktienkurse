@@ -1,0 +1,27 @@
+
+name: Aktienkurse per Mail
+ 
+on:
+  schedule:
+    # Alle 5 Minuten, Mo–Fr, 13–21 Uhr UTC (deckt die US-Börsenzeiten ab,
+    # das Skript prüft selbst, ob die Börse wirklich offen ist)
+    - cron: "*/5 13-21 * * 1-5"
+  workflow_dispatch:   # erlaubt manuelles Starten zum Testen
+ 
+jobs:
+  kurse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+ 
+      - run: pip install yfinance
+ 
+      - run: python aktienkurse_mail.py
+        env:
+          GMAIL_ADRESSE: ${{ secrets.GMAIL_ADRESSE }}
+          GMAIL_APP_PASSWORT: ${{ secrets.GMAIL_APP_PASSWORT }}
+          EMPFAENGER: ${{ secrets.EMPFAENGER }}
