@@ -5,7 +5,7 @@ on:
   schedule:
     # Alle 5 Minuten, Mo–Fr, 13–21 Uhr UTC (deckt die US-Börsenzeiten ab,
     # das Skript prüft selbst, ob die Börse wirklich offen ist)
-    - cron: "*/5 13-21 * * 1-5"
+    - cron: "*/5 14-20 * * 1-5"
   workflow_dispatch:   # erlaubt manuelles Starten zum Testen
  
 jobs:
