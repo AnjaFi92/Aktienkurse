@@ -1,22 +1,19 @@
 """
-Aktienkurse alle 3 Minuten abrufen und per E-Mail verschicken.
+Aktienkurse abrufen und per E-Mail verschicken – Version für GitHub Actions.
+Läuft bei jedem Aufruf genau EINMAL (den Zeitplan übernimmt GitHub).
 
-Installation (einmalig):
-    pip install yfinance
-
-Vor dem Start unten bei "E-MAIL EINSTELLUNGEN" deine Daten eintragen.
-Start:   python aktienkurse_mail.py
-Beenden: Ctrl+C
+Die Zugangsdaten kommen aus den GitHub-Secrets:
+    GMAIL_ADRESSE, GMAIL_APP_PASSWORT, EMPFAENGER
 """
 
-import time
+import os
 import smtplib
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
 
 import yfinance as yf
 
-# ----------------- AKTIEN -----------------
 TICKER = {
     "INTC": "Intel Corp",
     "NVDA": "Nvidia",
@@ -26,28 +23,22 @@ TICKER = {
     "SMCI": "Super Micro Computer",
     "TSLA": "Tesla",
 }
-INTERVALL_SEKUNDEN = 10 * 60   # 10 Minuten
 
-# ----------------- E-MAIL EINSTELLUNGEN -----------------
-# Gmail:   smtp.gmail.com, Port 587  (App-Passwort nötig!)
-# Outlook: smtp.office365.com, Port 587
-# GMX:     mail.gmx.net, Port 587
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-ABSENDER = "anjafischer92@gmail.com"
-PASSWORT = "pzoq tpkc wvib vwfr"        # NICHT dein normales Passwort, sondern App-Passwort
-EMPFAENGER = "anja-fischer@hotmail.com"
+ABSENDER = os.environ["GMAIL_ADRESSE"]
+PASSWORT = os.environ["GMAIL_APP_PASSWORT"]
+EMPFAENGER = os.environ["EMPFAENGER"]
 
-# Nur während US-Börsenzeiten senden? (15:30–22:00 Schweizer Zeit, Mo–Fr)
-NUR_BOERSENZEITEN = True
+# Beim manuellen Test über GitHub ("Run workflow") wird immer gesendet
+MANUELL = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
 
 def boerse_offen():
-    jetzt = datetime.now()
-    if jetzt.weekday() >= 5:          # Samstag/Sonntag
+    """US-Börse: Mo–Fr, 9:30–16:00 New Yorker Zeit (Sommerzeit wird automatisch beachtet)."""
+    ny = datetime.now(ZoneInfo("America/New_York"))
+    if ny.weekday() >= 5:
         return False
-    minuten = jetzt.hour * 60 + jetzt.minute
-    return 15 * 60 + 30 <= minuten <= 22 * 60
+    minuten = ny.hour * 60 + ny.minute
+    return 9 * 60 + 30 <= minuten <= 16 * 60
 
 
 def kurs_abrufen(symbol):
@@ -81,30 +72,21 @@ def mail_senden(betreff, text):
     msg["Subject"] = betreff
     msg["From"] = ABSENDER
     msg["To"] = EMPFAENGER
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(ABSENDER, PASSWORT)
         server.send_message(msg)
 
 
 def main():
-    print("Kurs-Mailer gestartet. Beenden mit Ctrl+C\n")
-    try:
-        while True:
-            if NUR_BOERSENZEITEN and not boerse_offen():
-                print(f"{datetime.now():%H:%M} – Börse geschlossen, warte ...")
-            else:
-                zeit = datetime.now().strftime("%d.%m.%Y %H:%M")
-                text = bericht_erstellen()
-                print(f"=== {zeit} ===\n{text}\n")
-                try:
-                    mail_senden(f"Aktienkurse {zeit}", text)
-                    print("→ Mail gesendet\n")
-                except Exception as e:
-                    print(f"→ Mail-Fehler: {e}\n")
-            time.sleep(INTERVALL_SEKUNDEN)
-    except KeyboardInterrupt:
-        print("\nBeendet.")
+    if not MANUELL and not boerse_offen():
+        print("Börse geschlossen – keine Mail.")
+        return
+    zeit = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y %H:%M")
+    text = bericht_erstellen()
+    print(text)
+    mail_senden(f"Aktienkurse {zeit}", text)
+    print("Mail gesendet.")
 
 
 if __name__ == "__main__":
