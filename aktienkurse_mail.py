@@ -33,8 +33,8 @@ ABSENDER = os.environ["GMAIL_ADRESSE"]
 PASSWORT = os.environ["GMAIL_APP_PASSWORT"]
 EMPFAENGER = os.environ["EMPFAENGER"]
 
-# Beim manuellen Test über GitHub ("Run workflow") wird immer gesendet
-MANUELL = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+# Auf True setzen, um ausserhalb der Börsenzeit zu testen (danach wieder False!)
+MANUELL = False
 
 
 def boerse_offen():
