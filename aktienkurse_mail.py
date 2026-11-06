@@ -1,6 +1,7 @@
 """
 Aktienkurse abrufen und per E-Mail verschicken – Version für GitHub Actions.
 Läuft bei jedem Aufruf genau EINMAL (den Zeitplan übernimmt GitHub).
+Die Mail ist eine HTML-Tabelle mit Tageshoch und Tagestief in Grün.
 
 Die Zugangsdaten kommen aus den GitHub-Secrets:
     GMAIL_ADRESSE, GMAIL_APP_PASSWORT, EMPFAENGER
@@ -10,6 +11,7 @@ import os
 import smtplib
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import yfinance as yf
@@ -24,6 +26,9 @@ TICKER = {
     "TSLA": "Tesla",
 }
 
+GRUEN = "#1a8f3c"
+ROT = "#c62828"
+
 ABSENDER = os.environ["GMAIL_ADRESSE"]
 PASSWORT = os.environ["GMAIL_APP_PASSWORT"]
 EMPFAENGER = os.environ["EMPFAENGER"]
@@ -33,7 +38,7 @@ MANUELL = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
 
 def boerse_offen():
-    """US-Börse: Mo–Fr, 9:30–16:00 New Yorker Zeit (Sommerzeit wird automatisch beachtet)."""
+    """US-Börse: Mo–Fr, 9:30–16:00 New Yorker Zeit."""
     ny = datetime.now(ZoneInfo("America/New_York"))
     if ny.weekday() >= 5:
         return False
@@ -46,32 +51,78 @@ def kurs_abrufen(symbol):
         info = yf.Ticker(symbol).fast_info
         preis = info["last_price"]
         vortag = info["previous_close"]
-        veraenderung = (preis - vortag) / vortag * 100 if vortag else 0.0
-        return preis, info["currency"], veraenderung
+        return {
+            "preis": preis,
+            "waehrung": info["currency"],
+            "veraenderung": (preis - vortag) / vortag * 100 if vortag else 0.0,
+            "hoch": info["day_high"],
+            "tief": info["day_low"],
+        }
     except Exception as e:
         print(f"Fehler bei {symbol}: {e}")
         return None
 
 
-def bericht_erstellen():
-    zeilen = []
+def berichte_erstellen():
+    """Gibt (Text-Version, HTML-Version) zurück."""
+    text_zeilen = []
+    html_zeilen = []
+    zelle = 'style="padding:6px 12px; border-bottom:1px solid #ddd;"'
+    zelle_r = 'style="padding:6px 12px; border-bottom:1px solid #ddd; text-align:right;"'
+
     for symbol, name in TICKER.items():
-        daten = kurs_abrufen(symbol)
-        if daten:
-            preis, waehrung, veraenderung = daten
-            pfeil = "▲" if veraenderung >= 0 else "▼"
-            zeilen.append(f"{name:<28} ({symbol:<5}) {preis:>10.2f} {waehrung}  "
-                          f"{pfeil} {veraenderung:+.2f}%")
-        else:
-            zeilen.append(f"{name:<28} ({symbol:<5}) – keine Daten")
-    return "\n".join(zeilen)
+        d = kurs_abrufen(symbol)
+        if not d:
+            text_zeilen.append(f"{name} ({symbol}) – keine Daten")
+            html_zeilen.append(
+                f"<tr><td {zelle}><b>{name}</b> ({symbol})</td>"
+                f'<td {zelle} colspan="4">keine Daten</td></tr>'
+            )
+            continue
+
+        pfeil = "▲" if d["veraenderung"] >= 0 else "▼"
+        farbe = GRUEN if d["veraenderung"] >= 0 else ROT
+        w = d["waehrung"]
+
+        text_zeilen.append(
+            f"{name} ({symbol}): {d['preis']:.2f} {w}  {pfeil} {d['veraenderung']:+.2f}%  "
+            f"| Hoch {d['hoch']:.2f}  Tief {d['tief']:.2f}"
+        )
+        html_zeilen.append(
+            f"<tr>"
+            f"<td {zelle}><b>{name}</b> ({symbol})</td>"
+            f"<td {zelle_r}>{d['preis']:.2f} {w}</td>"
+            f'<td {zelle_r}><span style="color:{farbe};">{pfeil} {d["veraenderung"]:+.2f}%</span></td>'
+            f'<td {zelle_r}><span style="color:{GRUEN}; font-weight:bold;">{d["hoch"]:.2f}</span></td>'
+            f'<td {zelle_r}><span style="color:{GRUEN}; font-weight:bold;">{d["tief"]:.2f}</span></td>'
+            f"</tr>"
+        )
+
+    kopf = 'style="padding:6px 12px; background:#f2f2f2; text-align:left;"'
+    html = f"""
+    <html><body style="font-family:Arial, sans-serif; font-size:14px;">
+    <table style="border-collapse:collapse;">
+      <tr>
+        <th {kopf}>Aktie</th>
+        <th {kopf}>Kurs</th>
+        <th {kopf}>Heute</th>
+        <th {kopf}>Tageshoch</th>
+        <th {kopf}>Tagestief</th>
+      </tr>
+      {''.join(html_zeilen)}
+    </table>
+    </body></html>
+    """
+    return "\n".join(text_zeilen), html
 
 
-def mail_senden(betreff, text):
-    msg = MIMEText(text, "plain", "utf-8")
+def mail_senden(betreff, text, html):
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = betreff
     msg["From"] = ABSENDER
     msg["To"] = EMPFAENGER
+    msg.attach(MIMEText(text, "plain", "utf-8"))   # Ersatz, falls HTML nicht angezeigt wird
+    msg.attach(MIMEText(html, "html", "utf-8"))
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(ABSENDER, PASSWORT)
@@ -83,9 +134,9 @@ def main():
         print("Börse geschlossen – keine Mail.")
         return
     zeit = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y %H:%M")
-    text = bericht_erstellen()
+    text, html = berichte_erstellen()
     print(text)
-    mail_senden(f"Aktienkurse {zeit}", text)
+    mail_senden(f"Aktienkurse {zeit}", text, html)
     print("Mail gesendet.")
 
 
